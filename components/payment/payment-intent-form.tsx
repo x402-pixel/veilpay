@@ -195,7 +195,7 @@ export function PaymentIntentForm() {
               ))}
             </select>
             <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">
-              v2 invoices carry a 32-byte token color — {asset} is issued as the open color
+              v3 invoices carry a 32-byte token color — {asset} is issued as the open color
               (zero bytes), so the invoice settles against shielded {asset}.
             </p>
           </div>

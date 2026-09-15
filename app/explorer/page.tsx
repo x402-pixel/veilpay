@@ -151,7 +151,7 @@ export default function ExplorerPage() {
             VeilPay Payment Explorer
           </h1>
           <p className="mt-3 text-pretty text-sm leading-relaxed text-muted-foreground">
-            Every invoice registered on the VeilPay v2 contract, updating in
+            Every invoice registered on the VeilPay v3 contract, updating in
             real time from the public ledger. Payers stay anonymous — only
             settlement status, amount, token color, and masked coin keys are
             public. No balances, addresses, or payment history are ever exposed.

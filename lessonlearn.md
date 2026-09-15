@@ -5,7 +5,39 @@
 
 ---
 
-## 1. Midnight Gateway / Contract (v2)
+## 1. Midnight Gateway / Contract (v3)
+
+### v3 integration (Sep 15) — private invoices via commitment
+- v3 contract `0xaad2cd8b9a98c9b8f7c6f3edd562d895705c19d24eb122c5253b22187e950772`
+  (upstream `deployments/preprod-v3.json`). Unlike v2, the ledger stores ONLY a
+  commitment — amount, token color, merchant coin key, invoice type, payment
+  secret and salt all live in private witnesses proven at settlement.
+- Issuance: `api.issueInvoice({ amount, tokenColor, merchantCoinPk, invoiceType,
+  expiresAt })` — the API generates the payment secret + salt and returns them;
+  the server MUST persist them in intent metadata (they are the checkout link's
+  opening data). Payer reconstructs the opening client-side via
+  `buildOpeningParams()` in `components/checkout/checkout-action.tsx`.
+- Upstream type bug: `VeilPay3CircuitKeys` in `api/src/common-types.ts` listed
+  `isSettled` as an impure circuit — it is a PURE ledger read, so including it
+  breaks `findDeployedContract`'s provider type check. Patched in vendor; do not
+  re-add it when merging upstream.
+- v3 CLI needs the contract address via env after a sandbox reset wiped the
+  state file: `VEILPAY_V3_CONTRACT_ADDRESS=<hex> node cli/src/gateway-cli3.js …`.
+- Hosted prover `api-preprod.1am.xyz` returned 500 on v3 `issueInvoice` proving
+  (same outage pattern as v1/v2). Ledger READ path (join + status) works without
+  the prover — verify reads when the write path is blocked.
+- ZK artifacts for the browser path are copied to `public/veilpay/managed-v3/`
+  (zkir + keys) from `vendor/veilpay/contract/src/managed/veilpay3/`.
+
+### Sandbox reset recovery via git objects
+- A sandbox reset replaced the working tree with upstream content, but app
+  commits survived in git objects: `git reflog` / `git cat-file -t <hash>` to
+  find the last good app commit, then `git checkout -f -b <branch> <hash>`.
+  Save uncommitted work (compiled vendor, edited package.json) to /tmp BEFORE
+  the forced checkout — uncommitted changes block/are destroyed by it.
+- Never `cp -R` a repo WITH its nested `.git` into the project root — the
+  nested `.git` hijacks subsequent git commands (checkout hit the outer repo
+  and wiped the app tree). Strip `.git` when vendoring.
 
 ### Indexer deploy-by-address lookup is unreliable
 - `contractAction(address:)` on the gateway indexer returns `__typename: "ContractCall"`
@@ -137,5 +169,6 @@
 - Checkout link accepts `?secret=` (canonical) + `#ps=` fragment.
 - Remaining roadmap items: payer coin funding/discovery (blocks live pay demo — demo
   against simulator until then), merchant onboarding must collect zswap coin pk
-  (NOT mn_addr), optional Supabase side table for merchant metadata labels, confirm
-  official v3 indexer decodes v2 ledger identically to gateway reads.
+  (NOT mn_addr), optional Supabase side table for merchant metadata labels, retry
+  v3 issuance end-to-end once the hosted prover outage clears (read path already
+  verified live against the v3 contract).

@@ -76,7 +76,7 @@ interface CheckoutActionProps {
 }
 
 /**
- * Read the claim code from the checkout link. Per the v2 invoice vocabulary
+ * Read the claim code from the checkout link. Per the v3 invoice vocabulary
  * the canonical form is `pay/<id>?secret=<hex>`; the `#ps=` fragment variant
  * is also accepted (fragments are never sent to the server, so the secret
  * stays out of logs entirely).
@@ -122,7 +122,7 @@ export function CheckoutAction({
       // Step 1: Preparing Payment
       setFlowState('PREPARING_PAYMENT')
 
-      // Step 2: v2 settlement spends a real shielded coin from the payer's
+      // Step 2: v3 settlement spends a real shielded coin from the payer's
       // synced wallet (docs/MIGRATION-V2-INVOICE.md "Payer funding caveat").
       // The extension API does not expose coin discovery yet, so until payer
       // funding lands there is no coin to spend — surface the honest funding
@@ -352,7 +352,7 @@ export function CheckoutAction({
                 {errorMessage}
               </p>
               <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
-                v2 invoices settle with a shielded coin spend — the app never moves unshielded
+                v3 invoices settle with a shielded coin spend — the app never moves unshielded
                 tDUST as a substitute, and never sponsors anyone&apos;s fees.
               </p>
             </div>
