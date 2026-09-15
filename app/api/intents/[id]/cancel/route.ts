@@ -8,10 +8,10 @@ import type { PaymentIntent, PaymentIntentStatus } from '@/lib/payments/types'
 import { recordActivityEvent } from '@/lib/payments/activity'
 import { isValidIntentId } from '@/lib/payments/intent'
 import {
-  getVeilPayReadiness,
-  getChainIntent,
-  VeilPayUnavailableError,
-} from '@/lib/veilpay-server'
+  getVeilPayV3Readiness,
+  getV3ChainInvoice,
+  VeilPayV3UnavailableError,
+} from '@/lib/veilpay-v3-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -97,21 +97,21 @@ export async function POST(
     // endpoint verifies the on-chain result and persists it.
     const meta = (dbIntent.metadata ?? {}) as { chainIntentId?: string }
     if (meta.chainIntentId) {
-      const readiness = getVeilPayReadiness()
+      const readiness = getVeilPayV3Readiness()
       if (!readiness.ready) {
         return NextResponse.json(
           {
-            error: 'VeilPay protocol integration is not ready.',
+            error: 'VeilPay v3 protocol integration is not ready.',
             missingCapabilities: readiness.missing,
           },
           { status: 503 },
         )
       }
       try {
-        const chain = await getChainIntent(meta.chainIntentId)
+        const chain = await getV3ChainInvoice(meta.chainIntentId)
         if (!chain) {
           return NextResponse.json(
-            { error: 'Invoice not found in the VeilPay contract ledger.' },
+            { error: 'Invoice not found in the VeilPay v3 contract ledger.' },
             { status: 404 },
           )
         }
@@ -125,14 +125,14 @@ export async function POST(
             { status: 409 },
           )
         }
-        if (chain.status === 'PAID' || chain.status === 'REFUNDED') {
+        if (chain.status === 'PAID' || chain.status === 'SETTLED') {
           return NextResponse.json(
             { error: 'Cannot cancel an already settled invoice.' },
             { status: 409 },
           )
         }
       } catch (chainErr) {
-        if (chainErr instanceof VeilPayUnavailableError) {
+        if (chainErr instanceof VeilPayV3UnavailableError) {
           return NextResponse.json(
             { error: chainErr.message, missingCapabilities: chainErr.missing },
             { status: 503 },

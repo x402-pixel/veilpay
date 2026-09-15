@@ -41,4 +41,3 @@ export class PreviewConfig extends PreprodConfig {
         };
     }
 }
-//# sourceMappingURL=config.js.map

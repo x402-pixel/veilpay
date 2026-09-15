@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from 'react'
 import type { PaymentIntent } from '@/lib/payments/types'
+import { parseDecimalToMicroUnits } from '@/lib/payments/intent'
 import {
   type CheckoutFlowState,
   submitCheckoutPayment,
 } from '@/lib/payments/payment-checkout'
 import { detectInjectedWallets } from '@/lib/wallet/detect'
-import type { PayerCoin } from '@/lib/veilpay/client'
+import type { InvoiceOpeningParams, PayerCoin } from '@/lib/veilpay/client'
 import {
   Lock,
   Loader2,
@@ -26,6 +27,38 @@ function chainIntentIdOf(intent: PaymentIntent): string {
   const id = (intent as { chainIntentId?: string }).chainIntentId
   if (!id) throw new Error('This invoice has no on-chain registration to settle against.')
   return id
+}
+
+/**
+ * Reconstruct the v3 private invoice opening from the checkout link + intent
+ * metadata. The public ledger only ever stored the commitment — the amount,
+ * token color, merchant coin key, invoice type, payment secret and salt are
+ * proven in zero knowledge at settlement time.
+ */
+function buildOpeningParams(intent: PaymentIntent, paymentSecret: string): InvoiceOpeningParams {
+  const amountMicro = parseDecimalToMicroUnits(intent.conditions.amount.amount)
+  if (amountMicro === null || amountMicro <= 0n) {
+    throw new Error('This invoice has an invalid amount.')
+  }
+  const { salt, merchantCoinPk, tokenColor, invoiceType } = intent
+  if (!salt || !merchantCoinPk) {
+    throw new Error(
+      'This checkout link is missing the invoice opening data required for v3 settlement.',
+    )
+  }
+  return {
+    amountMicro,
+    tokenColor: tokenColor || '00'.repeat(32),
+    merchantCoinPk,
+    invoiceType:
+      invoiceType?.toLowerCase() === 'multipay'
+        ? 'multipay'
+        : invoiceType?.toLowerCase() === 'donation'
+          ? 'donation'
+          : 'standard',
+    paymentSecret,
+    salt,
+  }
 }
 
 /**
@@ -116,7 +149,7 @@ export function CheckoutAction({
       }
       const txReference = await payInvoice(wallets[0].id, {
         chainIntentId: chainIntentIdOf(intent),
-        paymentSecret,
+        opening: buildOpeningParams(intent, paymentSecret),
         coin,
       }).then(() => `shielded_pay_${intent.id}`)
 

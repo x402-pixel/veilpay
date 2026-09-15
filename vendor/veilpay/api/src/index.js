@@ -5,7 +5,7 @@
  */
 import * as VeilPay from '../../contract/src/managed/veilpay/contract/index.js';
 import { veilPayPrivateStateKey, } from './common-types.js';
-import { CompiledVeilPayContractContract } from '../../contract/src/index.js';
+import { CompiledVeilPayContractContract } from '../../contract/src/index';
 import * as utils from './utils/index.js';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { combineLatest, map, tap, from } from 'rxjs';
@@ -128,4 +128,3 @@ export class VeilPayAPI {
         return existing ?? createVeilPayPrivateState(utils.randomBytes(32));
     }
 }
-//# sourceMappingURL=index.js.map

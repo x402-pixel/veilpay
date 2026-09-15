@@ -28,4 +28,3 @@ export const randomBytes = (length) => {
     crypto.getRandomValues(bytes);
     return bytes;
 };
-//# sourceMappingURL=index.js.map

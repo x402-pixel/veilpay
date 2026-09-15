@@ -1,0 +1,20 @@
+{
+  "include": ["api/src/**/*.ts", "cli/src/**/*.ts", "contract/src/**/*.ts"],
+  "exclude": ["**/test/**", "**/*.test.ts", "contract/src/managed/**", "cli/src/launcher/**"],
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ESNext"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "outDir": ".",
+    "rootDir": ".",
+    "declaration": false,
+    "sourceMap": false,
+    "strict": false,
+    "noImplicitAny": false
+  }
+}

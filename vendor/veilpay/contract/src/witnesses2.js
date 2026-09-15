@@ -15,4 +15,3 @@ export const witnesses2 = {
     },
     receiptSecret: ({ privateState, }) => [privateState, privateState.receiptSecret],
 };
-//# sourceMappingURL=witnesses2.js.map

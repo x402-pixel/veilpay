@@ -34,4 +34,3 @@ export const createLogger = async (logPath) => {
         { stream: createWriteStream(logPath), level },
     ]));
 };
-//# sourceMappingURL=logger-utils.js.map

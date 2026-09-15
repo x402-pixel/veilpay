@@ -10,6 +10,7 @@ import type { VeilPay } from '../../contract/src/index';
 import type { VeilPayPrivateState } from '../../contract/src/witnesses';
 import type { VeilPay2 } from '../../contract/src/index';
 import type { VeilPay2PrivateState } from '../../contract/src/witnesses2';
+import type { InvoiceOpening as VeilPay3InvoiceOpening, VeilPay3PrivateState } from '../../contract/src/witnesses3';
 
 export const veilPayPrivateStateKey = 'veilPayPrivateState';
 export type PrivateStateId = typeof veilPayPrivateStateKey;
@@ -69,4 +70,41 @@ export type Intent2View = {
   readonly refundedAmount: bigint;
   readonly hasReceipt: boolean;
   readonly isMine: boolean;
+};
+
+// ─── v3 (private invoices, atomic shielded settlement) ────────────
+
+export const veilPay3PrivateStateKey = 'veilPay3PrivateState';
+export type PrivateStateId3 = typeof veilPay3PrivateStateKey;
+
+export type PrivateStates3 = {
+  readonly veilPay3PrivateState: VeilPay3PrivateState;
+};
+
+/**
+ * Impure circuit names of the v3 contract, kept structural so this shared
+ * module does not depend on managed/veilpay3 being generated first.
+ *
+ * `isSettled` is intentionally absent: it is a PURE ledger read (no
+ * witnesses, no transaction), so it is not a ProvableCircuitId — including
+ * it here breaks findDeployedContract's provider type check.
+ */
+export type VeilPay3CircuitKeys =
+  | 'issueInvoice'
+  | 'settleStandard'
+  | 'settleMultiPayment'
+  | 'acceptDonation'
+  | 'settleMulti'
+  | 'cancelInvoice';
+
+export type VeilPay3Providers = MidnightProviders<VeilPay3CircuitKeys, PrivateStateId3, VeilPay3PrivateState>;
+
+/** Public view of a v3 invoice: only the commitment and lifecycle are public. */
+export type Invoice3View = {
+  readonly invoiceId: string;
+  readonly opening: VeilPay3InvoiceOpening;
+  /** InvoiceStatus enum value from the generated contract, when known. */
+  readonly status: number | null;
+  readonly expiresAt: bigint;
+  readonly hasReceipt: boolean;
 };

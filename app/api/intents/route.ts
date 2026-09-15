@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import {
   saveServerIntent,
@@ -10,15 +9,17 @@ import {
   parseDecimalToMicroUnits,
 } from '@/lib/payments/intent'
 import {
-  getVeilPayReadiness,
-  readVeilPayLedger,
-  VeilPayUnavailableError,
-} from '@/lib/veilpay-server'
+  getVeilPayV3Readiness,
+  readVeilPayV3Ledger,
+  VeilPayV3UnavailableError,
+} from '@/lib/veilpay-v3-server'
 import {
-  veilpayV2,
   withWriteLock,
   hexToBytes32,
 } from '@/lib/veilpay-v2-server'
+import {
+  veilpayV3,
+} from '@/lib/veilpay-v3-server'
 import { midnightPublicConfig } from '@/lib/config'
 import type { PaymentConditions, PaymentIntent, PaymentIntentStatus } from '@/lib/payments/types'
 import { createClient } from '@/lib/supabase/server'
@@ -160,6 +161,10 @@ export async function GET(request: Request) {
         chainIntentId?: string
         paymentSecret?: string
         expiresAtOps?: string
+        salt?: string
+        invoiceType?: string
+        merchantCoinPk?: string
+        tokenColor?: string
       }
 
       return {
@@ -183,6 +188,10 @@ export async function GET(request: Request) {
         chainIntentId: meta.chainIntentId,
         paymentSecret: meta.paymentSecret,
         expiresAtOps: meta.expiresAtOps,
+        salt: meta.salt,
+        invoiceType: meta.invoiceType,
+        merchantCoinPk: meta.merchantCoinPk,
+        tokenColor: meta.tokenColor,
       }
     })
 
@@ -200,9 +209,9 @@ export async function GET(request: Request) {
 }
 
 /**
- * Create an invoice SERVER-SIDE over the VeilPay v2 gateway stack.
+ * Create an invoice SERVER-SIDE over the VeilPay v3 gateway stack.
  *
- * Phase 1 of the v2 kit migration: the server — not the browser wallet —
+ * Phase 1 of the v3 kit migration: the server — not the browser wallet —
  * issues the on-chain invoice (hosted proving, sponsored fees, RPC
  * submission). The browser stays connect + read-only until Phase 2 browser
  * pay lands. The payment secret is generated here and stored in invoice
@@ -288,13 +297,13 @@ export async function POST(request: Request) {
       }
     }
 
-    // Phase 1 (v2 kit): the SERVER issues the invoice over the gateway stack —
+    // Phase 1 (v3 kit): the SERVER issues the invoice over the gateway stack —
     // the browser never submits transactions.
-    const readiness = getVeilPayReadiness()
+    const readiness = getVeilPayV3Readiness()
     if (!readiness.ready) {
       return NextResponse.json(
         {
-          error: 'VeilPay protocol integration is not ready.',
+          error: 'VeilPay v3 protocol integration is not ready.',
           missingCapabilities: readiness.missing,
         },
         { status: 503 },
@@ -309,9 +318,9 @@ export async function POST(request: Request) {
       )
     }
 
-    let v2: Awaited<ReturnType<typeof veilpayV2>>
+    let v3: Awaited<ReturnType<typeof veilpayV3>>
     try {
-      v2 = await veilpayV2()
+      v3 = await veilpayV3()
     } catch (e) {
       return NextResponse.json(
         { error: `VeilPay gateway unavailable: ${e instanceof Error ? e.message : String(e)}` },
@@ -320,32 +329,34 @@ export async function POST(request: Request) {
     }
 
     // Anchor expiry against the live ledger sequence (NOT wall clock).
-    const ledgerState = await readVeilPayLedger()
+    const ledgerState = await readVeilPayV3Ledger()
     const ttlOps =
       typeof body.ttlOps === 'string' && /^\d+$/.test(body.ttlOps)
         ? BigInt(body.ttlOps)
         : 1000n
     const expiresAtOps = ledgerState.sequence + ttlOps
 
-    const merchantCoinPkHex = String(v2.providers.walletProvider.getCoinPublicKey()).replace(/^0x/, '')
+    const merchantCoinPkHex = String(v3.providers.walletProvider.getCoinPublicKey()).replace(/^0x/, '')
     const merchantCoinPk = hexToBytes32(merchantCoinPkHex, 'merchantCoinPk')
-    const paymentSecret = randomBytes(32)
 
-    // Open invoice: all-zero token color accepts any shielded token.
-    let chainIntentId: bigint
+    // Open invoice: all-zero token color accepts any shielded token. v3 keeps
+    // the amount, color, coin key, type, payment secret and salt in private
+    // witnesses — only the commitment reaches the ledger. The API generates
+    // the payment secret and salt and returns them for the checkout link.
+    let issued: Awaited<ReturnType<typeof v3.api.issueInvoice>>
     try {
-      chainIntentId = await withWriteLock(() =>
-        v2.api.createIntent(
-          amountMicro,
-          expiresAtOps,
-          new Uint8Array(32),
+      issued = await withWriteLock(() =>
+        v3.api.issueInvoice({
+          amount: amountMicro,
+          tokenColor: new Uint8Array(32),
           merchantCoinPk,
-          paymentSecret,
-        ),
+          invoiceType: 'standard',
+          expiresAt: expiresAtOps,
+        }),
       )
     } catch (e) {
       // The hosted prover (/check+/prove at api-preprod.1am.xyz) has been
-      // returning 500 on the v2 createIntent circuit — an upstream gateway
+      // returning 500 on circuit checks — an upstream gateway
       // outage, not a bug in this app. Surface it as a retryable 503.
       const msg = e instanceof Error ? e.message : String(e)
       if (/proof server|\/check|\/prove/i.test(msg)) {
@@ -360,8 +371,8 @@ export async function POST(request: Request) {
       }
       throw e
     }
-    const chainIntentIdStr = chainIntentId.toString()
-    const paymentSecretHex = paymentSecret.toString('hex')
+    const chainIntentIdStr = issued.invoiceId
+    const paymentSecretHex = issued.paymentSecret
 
     // Assemble the authoritative typed intent
     const intentId = idempotencyKey && isValidIntentId(idempotencyKey) ? idempotencyKey : undefined
@@ -399,8 +410,10 @@ export async function POST(request: Request) {
       metadata: {
         chainIntentId: chainIntentIdStr,
         paymentSecret: paymentSecretHex,
-        tokenColor: '',
-        merchantCoinPk: merchantCoinPkHex,
+        salt: issued.salt,
+        invoiceType: issued.invoiceType,
+        tokenColor: issued.tokenColor,
+        merchantCoinPk: issued.merchantCoinPk,
         expiresAtOps: expiresAtOps.toString(),
       },
       created_at: draft.createdAt,
@@ -444,7 +457,7 @@ export async function POST(request: Request) {
       { status: 201 },
     )
   } catch (err: unknown) {
-    if (err instanceof VeilPayUnavailableError) {
+    if (err instanceof VeilPayV3UnavailableError) {
       return NextResponse.json(
         { error: err.message, missingCapabilities: err.missing },
         { status: 503 },

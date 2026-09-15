@@ -4,11 +4,11 @@ import { recordActivityEvent } from '@/lib/payments/activity'
 import { isValidIntentId } from '@/lib/payments/intent'
 import type { PaymentIntentStatus } from '@/lib/payments/types'
 import {
-  getVeilPayReadiness,
-  getChainIntent,
-  VeilPayUnavailableError,
-  type VeilPayChainIntent,
-} from '@/lib/veilpay-server'
+  getVeilPayV3Readiness,
+  getV3ChainInvoice,
+  VeilPayV3UnavailableError,
+  type VeilPayV3ChainInvoice,
+} from '@/lib/veilpay-v3-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -121,13 +121,13 @@ export async function POST(
     }
 
     // 3. Protocol stack must be ready
-    const readiness = getVeilPayReadiness()
+    const readiness = getVeilPayV3Readiness()
     if (!readiness.ready) {
       return NextResponse.json(
         {
           success: false,
           code: 'VEILPAY_NOT_CONFIGURED',
-          message: 'VeilPay protocol integration is not ready.',
+          message: 'VeilPay v3 protocol integration is not ready.',
           missingCapabilities: readiness.missing,
         },
         { status: 503 },
@@ -141,22 +141,22 @@ export async function POST(
         : undefined
 
     // 4. Read authoritative on-chain state. The customer's wallet has (or is
-    // about to) broadcast the pay tx; the ledger is the source of truth.
-    let chain = await getChainIntent(meta.chainIntentId)
+    // about to) broadcast the settle tx; the ledger is the source of truth.
+    let chain = await getV3ChainInvoice(meta.chainIntentId)
     if (!chain) {
       return NextResponse.json(
-        { success: false, error: 'Invoice not found in the VeilPay contract ledger.' },
+        { success: false, error: 'Invoice not found in the VeilPay v3 contract ledger.' },
         { status: 404 },
       )
     }
 
-    // 5. If the pay tx was just broadcast, the indexer lags the block that
+    // 5. If the settle tx was just broadcast, the indexer lags the block that
     // settled it — poll the ledger briefly before giving up.
     if (chain.status === 'ACTIVE') {
-      let polled: VeilPayChainIntent | null = chain
+      let polled: VeilPayV3ChainInvoice | null = chain
       for (let attempt = 0; attempt < 20 && polled?.status === 'ACTIVE'; attempt++) {
         await new Promise((r) => setTimeout(r, 3_000))
-        polled = await getChainIntent(meta.chainIntentId)
+        polled = await getV3ChainInvoice(meta.chainIntentId)
       }
       if (polled) chain = polled
     }
@@ -224,7 +224,7 @@ export async function POST(
       message: 'Payment verified against the VeilPay contract.',
     })
   } catch (err: unknown) {
-    if (err instanceof VeilPayUnavailableError) {
+    if (err instanceof VeilPayV3UnavailableError) {
       return NextResponse.json(
         { success: false, error: err.message, missingCapabilities: err.missing },
         { status: 503 },

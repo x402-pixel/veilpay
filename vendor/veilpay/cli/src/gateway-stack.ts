@@ -38,7 +38,6 @@ import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-p
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
-import type { LevelFactory } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
 import { Level } from 'level';
 import { Transaction, ZswapSecretKeys } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import { type TransactionId } from '@midnight-ntwrk/midnight-js-protocol/ledger';
@@ -56,11 +55,11 @@ import { type VeilPayProviders, type PrivateStateId } from '../../api/src/common
 import { type VeilPayPrivateState } from '../../contract/src/witnesses.js';
 import { type VeilPay2Providers, type PrivateStateId2 } from '../../api/src/common-types.js';
 import { type VeilPay2PrivateState } from '../../contract/src/witnesses2.js';
+import { type VeilPay3Providers, type PrivateStateId3 } from '../../api/src/common-types.js';
+import { type VeilPay3PrivateState } from '../../contract/src/witnesses3.js';
 
 const currentDir = path.resolve(fileURLToPath(import.meta.url), '..');
-export const STATE_DIR = process.env.VEILPAY_STATE_DIR
-  ? path.resolve(process.env.VEILPAY_STATE_DIR)
-  : path.resolve(currentDir, '..', '.veilpay-state');
+export const STATE_DIR = path.resolve(currentDir, '..', '.veilpay-state');
 export const SESSION_FILE = path.join(STATE_DIR, 'gw_session.json');
 export const ADDRESS_FILE = path.join(STATE_DIR, 'contract-address');
 
@@ -71,8 +70,9 @@ const GW_INDEXER_WS = `wss://api-preprod.1am.xyz/api/v4/graphql/ws`;
 export const EXPLORER = 'https://preprod.midnightexplorer.com';
 
 /** Which compiled contract a stack/provision is built for. */
-export type ContractVersion = 'v1' | 'v2';
+export type ContractVersion = 'v1' | 'v2' | 'v3';
 export const ADDRESS_FILE_V2 = path.join(STATE_DIR, 'contract-address-v2');
+export const ADDRESS_FILE_V3 = path.join(STATE_DIR, 'contract-address-v3');
 
 type Logger = { info: (m: string) => void; warn?: (m: string) => void };
 
@@ -137,14 +137,8 @@ export async function gatewaySession(seed: string, logger: Logger): Promise<Gate
   });
   if (!vRes.ok) throw new Error(`gateway auth failed: ${vRes.status} ${await vRes.text()}`);
   const session = (await vRes.json()) as GatewaySession;
-  // Read-only filesystems (Vercel serverless) must not fail the auth flow;
-  // the session is simply re-established on the next cold start.
-  try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(SESSION_FILE, JSON.stringify(session));
-  } catch {
-    logger.info('gateway session cache not persisted (read-only fs)');
-  }
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.writeFileSync(SESSION_FILE, JSON.stringify(session));
   logger.info(`gateway session established for ${session.address}`);
   return session;
 }
@@ -249,6 +243,18 @@ const TX_BY_HASH_QUERY = `
 const DEPLOY_TX_QUERY = `
   query($address: HexEncoded!) {
     contractAction(address: $address) {
+      ... on ContractCall { deploy { transaction {
+        id protocolVersion raw hash
+        contractActions { address }
+        block { height hash author timestamp }
+        unshieldedCreatedOutputs { owner intentHash tokenType value }
+        unshieldedSpentOutputs { owner intentHash tokenType value }
+        ... on RegularTransaction {
+          identifiers
+          fees { estimatedFees paidFees }
+          transactionResult { status segments { id success } }
+        }
+      } } }
       ... on ContractDeploy { transaction {
         id protocolVersion raw hash
         contractActions { address }
@@ -397,7 +403,10 @@ async function pollDeployTx(
  *    *hash* the gateway reported from /balance-only instead (FIFO-ordered:
  *    balance -> submit -> watch is strictly sequential in midnight-js).
  *  - watchForDeployTxData: polls contractAction(address) directly, which the
- *    gateway indexer answers fine.
+ *    gateway indexer answers fine. NOTE: contractAction returns the *latest*
+ *    action for the address, which becomes a ContractCall once any intent has
+ *    been created; we follow its `deploy` edge, and callers can also pass the
+ *    known deploy-tx hash explicitly to skip address lookup entirely.
  */
 export function withPollingWatches(
   base: PublicDataProvider,
@@ -417,9 +426,6 @@ export function withPollingWatches(
     },
     async watchForDeployTxData(contractAddress: string): Promise<FinalizedTxData> {
       logger.info(`watchForDeployTxData: polling indexer for deploy of ${contractAddress}`);
-      // The gateway indexer's deploy-by-address lookup is flaky (returns null
-      // for long-deployed contracts); when the deploy tx hash is known, poll
-      // by hash instead, which the indexer answers reliably.
       const tx = deployTxHash
         ? await pollTxByHash(session, deployTxHash, logger)
         : await pollDeployTx(session, contractAddress, logger);
@@ -451,6 +457,12 @@ export interface GatewayStack2 {
   close: () => Promise<void>;
 }
 
+export interface GatewayStack3 {
+  providers: VeilPay3Providers;
+  session: GatewaySession;
+  close: () => Promise<void>;
+}
+
 /**
  * Build the full VeilPay provider stack over the gateway: hosted proving,
  * sponsored balancing, RPC submission, relayed indexer queries, and the
@@ -458,8 +470,18 @@ export interface GatewayStack2 {
  */
 export async function buildGatewayStack(
   logger: Logger,
-  opts: { version?: ContractVersion; privateStateStoreName?: string; deployTxHash?: string } = {},
-): Promise<GatewayStack & GatewayStack2> {
+  opts: {
+    version?: ContractVersion;
+    privateStateStoreName?: string;
+    /**
+     * Known deploy transaction hash (hex, 0x optional). When set, the join
+     * inclusion watch polls the indexer by hash instead of by contract
+     * address, which sidesteps the gateway's latest-action-per-address
+     * ambiguity (verified live 2026-09-14).
+     */
+    deployTxHash?: string;
+  } = {},
+): Promise<GatewayStack & GatewayStack2 & GatewayStack3> {
   const version = opts.version ?? 'v1';
   setNetworkId('preprod');
   const seed = loadSeed();
@@ -481,9 +503,21 @@ export async function buildGatewayStack(
 
   const zkConfigPath = path.resolve(
     currentDir, '..', '..', 'contract', 'src', 'managed',
-    version === 'v2' ? 'veilpay2' : 'veilpay',
+    version === 'v2' ? 'veilpay2' : version === 'v3' ? 'veilpay3' : 'veilpay',
   );
-  const zkConfigProvider = new NodeZkConfigProvider<'createIntent' | 'pay' | 'refund' | 'cancel'>(zkConfigPath);
+  type CircuitId =
+    | 'createIntent'
+    | 'pay'
+    | 'refund'
+    | 'cancel'
+    | 'issueInvoice'
+    | 'settleStandard'
+    | 'settleMultiPayment'
+    | 'acceptDonation'
+    | 'settleMulti'
+    | 'cancelInvoice'
+    | 'isSettled';
+  const zkConfigProvider = new NodeZkConfigProvider<CircuitId>(zkConfigPath);
 
   const relay = await startIndexerRelay(session, logger);
 
@@ -602,22 +636,35 @@ export async function buildGatewayStack(
   };
 
   const basePublicData = indexerPublicDataProvider(relay.httpUrl, relay.wsUrl);
-  const storeName = opts.privateStateStoreName ?? (version === 'v2' ? 'veilpay2-private-state' : 'veilpay-private-state');
+  const storeName =
+    opts.privateStateStoreName ??
+    (version === 'v2' ? 'veilpay2-private-state' : version === 'v3' ? 'veilpay3-private-state' : 'veilpay-private-state');
   const providers = {
     privateStateProvider: levelPrivateStateProvider<PrivateStateId, VeilPayPrivateState>({
       privateStateStoreName: storeName,
       signingKeyStoreName: `${storeName}-signing-keys`,
       privateStoragePasswordProvider: () => 'VeilPay-Local-2026!',
       accountId: seed,
-      // Keep leveldb under the (writable) STATE_DIR — the app cwd is
-      // read-only on Vercel serverless. Cast needed: pnpm resolves two
-      // abstract-level majors (provider: 3.x, level@8: 1.x); runtime API
-      // used by the provider is compatible.
-      levelFactory: ((dbName: string) =>
-        new Level(path.join(STATE_DIR, 'private-state', dbName), {
-          createIfMissing: true,
-        })) as unknown as LevelFactory,
-    }) as unknown as VeilPayProviders['privateStateProvider'] & VeilPay2Providers['privateStateProvider'],
+      // Keep leveldb under the (writable) STATE_DIR. The provider's
+      // withSubLevel opens+closes a fresh Level per operation; concurrent ops
+      // (e.g. encryption salt init racing a get/set) then double-open the same
+      // path and flock-conflict with themselves. Cache one instance per dbName
+      // and neuter close() so a single handle lives for the process lifetime.
+      levelFactory: (() => {
+        const cache = new Map<string, Level<string, string>>();
+        return (dbName: string) => {
+          let db = cache.get(dbName);
+          if (!db) {
+            db = new Level(path.join(STATE_DIR, 'private-state', dbName), { createIfMissing: true });
+            (db as { close: () => Promise<void> }).close = async () => {};
+            cache.set(dbName, db);
+          }
+          return db;
+        };
+      })(),
+    }) as unknown as VeilPayProviders['privateStateProvider'] &
+      VeilPay2Providers['privateStateProvider'] &
+      VeilPay3Providers['privateStateProvider'],
     publicDataProvider: withPollingWatches(
       basePublicData,
       session,
@@ -631,7 +678,7 @@ export async function buildGatewayStack(
     }),
     walletProvider,
     midnightProvider,
-  } as unknown as VeilPayProviders & VeilPay2Providers;
+  } as unknown as VeilPayProviders & VeilPay2Providers & VeilPay3Providers;
 
   return {
     providers,

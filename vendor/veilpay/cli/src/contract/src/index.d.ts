@@ -1,0 +1,11 @@
+import { CompiledContract } from "@midnight-ntwrk/midnight-js-protocol/compact-js";
+export * as VeilPay from "./managed/veilpay/contract/index.js";
+export * from "./witnesses";
+export * as VeilPay2 from "./managed/veilpay2/contract/index.js";
+export * from "./witnesses2";
+import * as CompiledVeilPayContract from "./managed/veilpay/contract/index.js";
+import * as Witnesses from "./witnesses";
+import * as CompiledVeilPay2Contract from "./managed/veilpay2/contract/index.js";
+import * as Witnesses2 from "./witnesses2";
+export declare const CompiledVeilPayContractContract: CompiledContract.CompiledContract<CompiledVeilPayContract.Contract<Witnesses.VeilPayPrivateState, CompiledVeilPayContract.Witnesses<Witnesses.VeilPayPrivateState>>, Witnesses.VeilPayPrivateState, never>;
+export declare const CompiledVeilPay2ContractContract: CompiledContract.CompiledContract<CompiledVeilPay2Contract.Contract<Witnesses2.VeilPay2PrivateState, CompiledVeilPay2Contract.Witnesses<Witnesses2.VeilPay2PrivateState>>, Witnesses2.VeilPay2PrivateState, never>;

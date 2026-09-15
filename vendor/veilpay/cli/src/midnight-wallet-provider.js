@@ -73,4 +73,3 @@ export class MidnightWalletProvider {
         return new MidnightWalletProvider(logger, env, wallet, ZswapSecretKeys.fromSeed(seeds.shielded), DustSecretKey.fromSeed(seeds.dust), keystore);
     }
 }
-//# sourceMappingURL=midnight-wallet-provider.js.map

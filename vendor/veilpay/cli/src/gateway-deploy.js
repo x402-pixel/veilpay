@@ -33,4 +33,3 @@ export const runGatewayDeploy = async () => {
     }
 };
 await runGatewayDeploy();
-//# sourceMappingURL=gateway-deploy.js.map

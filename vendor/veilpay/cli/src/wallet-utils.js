@@ -81,4 +81,3 @@ export const waitForUnshieldedFunds = async (logger, wallet, env, tokenType, fun
     }
     return initialState;
 };
-//# sourceMappingURL=wallet-utils.js.map

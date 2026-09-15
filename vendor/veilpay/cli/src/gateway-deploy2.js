@@ -29,4 +29,3 @@ const runGatewayDeploy2 = async () => {
     }
 };
 await runGatewayDeploy2();
-//# sourceMappingURL=gateway-deploy2.js.map

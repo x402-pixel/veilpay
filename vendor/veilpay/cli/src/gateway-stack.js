@@ -40,9 +40,7 @@ import { Level } from 'level';
 import { Transaction, ZswapSecretKeys } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import { FailEntirely, FailFallible, SucceedEntirely, SegmentSuccess, SegmentFail, } from '@midnight-ntwrk/midnight-js-types';
 const currentDir = path.resolve(fileURLToPath(import.meta.url), '..');
-export const STATE_DIR = process.env.VEILPAY_STATE_DIR
-    ? path.resolve(process.env.VEILPAY_STATE_DIR)
-    : path.resolve(currentDir, '..', '.veilpay-state');
+export const STATE_DIR = path.resolve(currentDir, '..', '.veilpay-state');
 export const SESSION_FILE = path.join(STATE_DIR, 'gw_session.json');
 export const ADDRESS_FILE = path.join(STATE_DIR, 'contract-address');
 export const GATEWAY = 'https://api-preprod.1am.xyz';
@@ -50,6 +48,7 @@ const GW_INDEXER_HTTP = `${GATEWAY}/api/v4/graphql`;
 const GW_INDEXER_WS = `wss://api-preprod.1am.xyz/api/v4/graphql/ws`;
 export const EXPLORER = 'https://preprod.midnightexplorer.com';
 export const ADDRESS_FILE_V2 = path.join(STATE_DIR, 'contract-address-v2');
+export const ADDRESS_FILE_V3 = path.join(STATE_DIR, 'contract-address-v3');
 const hex = (b) => Buffer.from(b).toString('hex');
 const unhex = (s) => new Uint8Array(Buffer.from(s.replace(/^0x/, ''), 'hex'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -104,14 +103,8 @@ export async function gatewaySession(seed, logger) {
     if (!vRes.ok)
         throw new Error(`gateway auth failed: ${vRes.status} ${await vRes.text()}`);
     const session = (await vRes.json());
-    // Read-only filesystems (Vercel serverless) must not fail the auth flow.
-    try {
-        fs.mkdirSync(STATE_DIR, { recursive: true });
-        fs.writeFileSync(SESSION_FILE, JSON.stringify(session));
-    }
-    catch {
-        logger.info('gateway session cache not persisted (read-only fs)');
-    }
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(SESSION_FILE, JSON.stringify(session));
     logger.info(`gateway session established for ${session.address}`);
     return session;
 }
@@ -211,6 +204,18 @@ const TX_BY_HASH_QUERY = `
 const DEPLOY_TX_QUERY = `
   query($address: HexEncoded!) {
     contractAction(address: $address) {
+      ... on ContractCall { deploy { transaction {
+        id protocolVersion raw hash
+        contractActions { address }
+        block { height hash author timestamp }
+        unshieldedCreatedOutputs { owner intentHash tokenType value }
+        unshieldedSpentOutputs { owner intentHash tokenType value }
+        ... on RegularTransaction {
+          identifiers
+          fees { estimatedFees paidFees }
+          transactionResult { status segments { id success } }
+        }
+      } } }
       ... on ContractDeploy { transaction {
         id protocolVersion raw hash
         contractActions { address }
@@ -344,7 +349,10 @@ async function pollDeployTx(session, contractAddress, logger, timeoutMs = 240_00
  *    *hash* the gateway reported from /balance-only instead (FIFO-ordered:
  *    balance -> submit -> watch is strictly sequential in midnight-js).
  *  - watchForDeployTxData: polls contractAction(address) directly, which the
- *    gateway indexer answers fine.
+ *    gateway indexer answers fine. NOTE: contractAction returns the *latest*
+ *    action for the address, which becomes a ContractCall once any intent has
+ *    been created; we follow its `deploy` edge, and callers can also pass the
+ *    known deploy-tx hash explicitly to skip address lookup entirely.
  */
 export function withPollingWatches(base, session, pendingMidnightHashes, logger, deployTxHash) {
     return {
@@ -357,9 +365,6 @@ export function withPollingWatches(base, session, pendingMidnightHashes, logger,
         },
         async watchForDeployTxData(contractAddress) {
             logger.info(`watchForDeployTxData: polling indexer for deploy of ${contractAddress}`);
-            // The gateway indexer's deploy-by-address lookup is flaky (returns
-            // null for long-deployed contracts); when the deploy tx hash is
-            // known, poll by hash instead, which the indexer answers reliably.
             const tx = deployTxHash
                 ? await pollTxByHash(session, deployTxHash, logger)
                 : await pollDeployTx(session, contractAddress, logger);
@@ -393,7 +398,7 @@ export async function buildGatewayStack(logger, opts = {}) {
     hd.hdWallet.clear();
     // Shielded keys come from the raw seed (matches the faucet-path identity).
     const zswapSecretKeys = ZswapSecretKeys.fromSeed(unhex(seed));
-    const zkConfigPath = path.resolve(currentDir, '..', '..', 'contract', 'src', 'managed', version === 'v2' ? 'veilpay2' : 'veilpay');
+    const zkConfigPath = path.resolve(currentDir, '..', '..', 'contract', 'src', 'managed', version === 'v2' ? 'veilpay2' : version === 'v3' ? 'veilpay3' : 'veilpay');
     const zkConfigProvider = new NodeZkConfigProvider(zkConfigPath);
     const relay = await startIndexerRelay(session, logger);
     // Midnight tx hashes reported by /balance-only, consumed in order by the
@@ -505,7 +510,8 @@ export async function buildGatewayStack(logger, opts = {}) {
         },
     };
     const basePublicData = indexerPublicDataProvider(relay.httpUrl, relay.wsUrl);
-    const storeName = opts.privateStateStoreName ?? (version === 'v2' ? 'veilpay2-private-state' : 'veilpay-private-state');
+    const storeName = opts.privateStateStoreName ??
+        (version === 'v2' ? 'veilpay2-private-state' : version === 'v3' ? 'veilpay3-private-state' : 'veilpay-private-state');
     const providers = {
         privateStateProvider: levelPrivateStateProvider({
             privateStateStoreName: storeName,
@@ -513,11 +519,10 @@ export async function buildGatewayStack(logger, opts = {}) {
             privateStoragePasswordProvider: () => 'VeilPay-Local-2026!',
             accountId: seed,
             // Keep leveldb under the (writable) STATE_DIR. The provider's
-            // withSubLevel opens+closes a fresh Level per operation; concurrent
-            // ops (e.g. encryption salt init racing a get/set) then double-open
-            // the same path and flock-conflict with themselves. Cache one
-            // instance per dbName and neuter close() so a single handle lives
-            // for the process lifetime.
+            // withSubLevel opens+closes a fresh Level per operation; concurrent ops
+            // (e.g. encryption salt init racing a get/set) then double-open the same
+            // path and flock-conflict with themselves. Cache one instance per dbName
+            // and neuter close() so a single handle lives for the process lifetime.
             levelFactory: (() => {
                 const cache = new Map();
                 return (dbName) => {
@@ -555,4 +560,3 @@ export async function buildGatewayStack(logger, opts = {}) {
         },
     };
 }
-//# sourceMappingURL=gateway-stack.js.map

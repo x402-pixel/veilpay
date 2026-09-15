@@ -17,6 +17,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { toHex } from '@midnight-ntwrk/midnight-js-utils';
 import { VeilPay2API } from '../../api/src/index2.js';
 import { ledger, } from '../../contract/src/managed/veilpay2/contract/index.js';
@@ -30,6 +31,29 @@ const deployedAddress = () => {
     if (fs.existsSync(ADDRESS_FILE_V2))
         return fs.readFileSync(ADDRESS_FILE_V2, 'utf8').trim();
     return null;
+};
+/**
+ * Known deploy tx for the ACTIVE v2 address, so the join watch can poll by
+ * hash instead of by address (the gateway's contractAction returns the
+ * *latest* action, which stops being a ContractDeploy once intents exist).
+ * VEILPAY_DEPLOY_TX overrides; otherwise read deployments/preprod-v2.json
+ * when its address matches the one we are joining.
+ */
+const deployTxHint = () => {
+    if (process.env.VEILPAY_DEPLOY_TX)
+        return process.env.VEILPAY_DEPLOY_TX.trim();
+    try {
+        const manifest = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..', 'deployments', 'preprod-v2.json');
+        const m = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+        const strip = (s) => s.replace(/^0x/, '');
+        if (m.deploymentTx && strip(m.contractAddress ?? '') === strip(deployedAddress() ?? '')) {
+            return m.deploymentTx;
+        }
+    }
+    catch {
+        /* manifest optional */
+    }
+    return undefined;
 };
 const STATUS_NAMES = ['ACTIVE', 'PAID', 'REFUNDED', 'CANCELLED'];
 const unhex32 = (s, label) => {
@@ -69,6 +93,7 @@ const run = async (argv) => {
     const stack = await buildGatewayStack(logger, {
         version: 'v2',
         privateStateStoreName: 'veilpay2-private-state',
+        deployTxHash: deployTxHint(),
     });
     const providers = stack.providers;
     try {
@@ -168,4 +193,3 @@ const run = async (argv) => {
     }
 };
 await run(process.argv.slice(2));
-//# sourceMappingURL=gateway-cli2.js.map
