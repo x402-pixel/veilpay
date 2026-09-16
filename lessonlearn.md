@@ -7,6 +7,23 @@
 
 ## 1. Midnight Gateway / Contract (v3)
 
+### Branch merge vs main's client-side issuance (Sep 15)
+- main moved issuance CLIENT-SIDE (`076e4ab`: merchant's wallet extension signs
+  `createIntent`, server only verifies against the public ledger + registers)
+  and DELETED `lib/veilpay-v2-server.ts`. Our v3-integration branch had built
+  SERVER-side issuance on the gateway stack — directly contradictory.
+- Resolution: main's architecture wins (it avoids server-held keys and the
+  gateway/prover at issuance time). Reverted to main/merge-base versions:
+  intents route (verification+registration), [id]/cancel/pay routes, browser
+  `client.ts`, `checkout-action.tsx`. The v3 work survives as dormant,
+  non-interfering additions: vendor kit (compiled), `lib/veilpay-v3-server.ts`
+  (self-contained, unused), v3 contract address in config, ZK artifacts in
+  `public/veilpay/managed-v3/`, and the lessonlearn/vendor knowledge.
+- Lesson: before building on a vendored stack, check whether the base branch's
+  architecture still matches — a parallel "fix" on main can invalidate an
+  entire integration approach. Reconcile by adopting the base branch's
+  decision and keeping the alternative as dormant, compiling code.
+
 ### v3 integration (Sep 15) — private invoices via commitment
 - v3 contract `0xaad2cd8b9a98c9b8f7c6f3edd562d895705c19d24eb122c5253b22187e950772`
   (upstream `deployments/preprod-v3.json`). Unlike v2, the ledger stores ONLY a

@@ -2,13 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import type { PaymentIntent } from '@/lib/payments/types'
-import { parseDecimalToMicroUnits } from '@/lib/payments/intent'
 import {
   type CheckoutFlowState,
   submitCheckoutPayment,
 } from '@/lib/payments/payment-checkout'
 import { detectInjectedWallets } from '@/lib/wallet/detect'
-import type { InvoiceOpeningParams, PayerCoin } from '@/lib/veilpay/client'
+import type { PayerCoin } from '@/lib/veilpay/client'
 import {
   Lock,
   Loader2,
@@ -30,38 +29,6 @@ function chainIntentIdOf(intent: PaymentIntent): string {
 }
 
 /**
- * Reconstruct the v3 private invoice opening from the checkout link + intent
- * metadata. The public ledger only ever stored the commitment — the amount,
- * token color, merchant coin key, invoice type, payment secret and salt are
- * proven in zero knowledge at settlement time.
- */
-function buildOpeningParams(intent: PaymentIntent, paymentSecret: string): InvoiceOpeningParams {
-  const amountMicro = parseDecimalToMicroUnits(intent.conditions.amount.amount)
-  if (amountMicro === null || amountMicro <= 0n) {
-    throw new Error('This invoice has an invalid amount.')
-  }
-  const { salt, merchantCoinPk, tokenColor, invoiceType } = intent
-  if (!salt || !merchantCoinPk) {
-    throw new Error(
-      'This checkout link is missing the invoice opening data required for v3 settlement.',
-    )
-  }
-  return {
-    amountMicro,
-    tokenColor: tokenColor || '00'.repeat(32),
-    merchantCoinPk,
-    invoiceType:
-      invoiceType?.toLowerCase() === 'multipay'
-        ? 'multipay'
-        : invoiceType?.toLowerCase() === 'donation'
-          ? 'donation'
-          : 'standard',
-    paymentSecret,
-    salt,
-  }
-}
-
-/**
  * Pick the shielded coin the pay circuit will spend. Coin discovery inside
  * the extension API has not shipped (docs/MIGRATION-V2-INVOICE.md "Payer
  * funding caveat"), so this returns null until payer funding lands.
@@ -76,7 +43,7 @@ interface CheckoutActionProps {
 }
 
 /**
- * Read the claim code from the checkout link. Per the v3 invoice vocabulary
+ * Read the claim code from the checkout link. Per the v2 invoice vocabulary
  * the canonical form is `pay/<id>?secret=<hex>`; the `#ps=` fragment variant
  * is also accepted (fragments are never sent to the server, so the secret
  * stays out of logs entirely).
@@ -122,7 +89,7 @@ export function CheckoutAction({
       // Step 1: Preparing Payment
       setFlowState('PREPARING_PAYMENT')
 
-      // Step 2: v3 settlement spends a real shielded coin from the payer's
+      // Step 2: v2 settlement spends a real shielded coin from the payer's
       // synced wallet (docs/MIGRATION-V2-INVOICE.md "Payer funding caveat").
       // The extension API does not expose coin discovery yet, so until payer
       // funding lands there is no coin to spend — surface the honest funding
@@ -149,7 +116,7 @@ export function CheckoutAction({
       }
       const txReference = await payInvoice(wallets[0].id, {
         chainIntentId: chainIntentIdOf(intent),
-        opening: buildOpeningParams(intent, paymentSecret),
+        paymentSecret,
         coin,
       }).then(() => `shielded_pay_${intent.id}`)
 
@@ -352,7 +319,7 @@ export function CheckoutAction({
                 {errorMessage}
               </p>
               <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
-                v3 invoices settle with a shielded coin spend — the app never moves unshielded
+                v2 invoices settle with a shielded coin spend — the app never moves unshielded
                 tDUST as a substitute, and never sponsors anyone&apos;s fees.
               </p>
             </div>

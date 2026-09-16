@@ -4,10 +4,10 @@ import { createClient } from '@/lib/supabase/server'
 import type { PaymentIntent, PaymentIntentStatus } from '@/lib/payments/types'
 import { isValidIntentId } from '@/lib/payments/intent'
 import {
-  getVeilPayV3Readiness,
-  getV3ChainInvoice,
-  mapV3StatusToAppStatus,
-} from '@/lib/veilpay-v3-server'
+  getVeilPayReadiness,
+  getChainIntent,
+  mapChainStatusToAppStatus,
+} from '@/lib/veilpay-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -79,19 +79,15 @@ export async function GET(
         chainIntentId?: string
         paymentSecret?: string
         expiresAtOps?: string
-        salt?: string
-        invoiceType?: string
-        merchantCoinPk?: string
-        tokenColor?: string
       }
 
       // Chain-backed intents: the contract ledger is authoritative. Sync the
       // local status from the on-chain state when the protocol stack is ready.
-      if (meta.chainIntentId && getVeilPayV3Readiness().ready) {
+      if (meta.chainIntentId && getVeilPayReadiness().ready) {
         try {
-          const chainIntent = await getV3ChainInvoice(meta.chainIntentId)
+          const chainIntent = await getChainIntent(meta.chainIntentId)
           if (chainIntent) {
-            const chainStatus = mapV3StatusToAppStatus(chainIntent.status) as PaymentIntentStatus
+            const chainStatus = mapChainStatusToAppStatus(chainIntent.status) as PaymentIntentStatus
             if (chainStatus !== status) {
               status = chainStatus
               await supabase
@@ -126,10 +122,6 @@ export async function GET(
         chainIntentId: meta.chainIntentId,
         paymentSecret: meta.paymentSecret,
         expiresAtOps: meta.expiresAtOps,
-        salt: meta.salt,
-        invoiceType: meta.invoiceType,
-        merchantCoinPk: meta.merchantCoinPk,
-        tokenColor: meta.tokenColor,
       }
     } else {
       // Fallback to local server store
