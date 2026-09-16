@@ -186,13 +186,14 @@ class ManagedCircuitZKConfigProvider extends ZKConfigProvider<string> {
         return Promise.all(ids.map(async (id) => [id, await this.getVerifierKey(id)] as const))
       },
     }
+    const getProverKey = (circuitId: unknown) =>
+      this.getProverKey(typeof circuitId === 'string' ? circuitId : '')
     return new Proxy(known, {
-      get(target, prop) {
-        if (prop in target) return target[prop]
+      get(target, prop: string | symbol) {
+        if (typeof prop === 'string' && prop in target) return target[prop]
         if (typeof prop === 'string' && /^get[A-Z]/.test(prop)) {
-          console.info(`[v0] wallet prover probed key material via ${String(prop)}`)
-          return (circuitId: unknown) =>
-            this.getProverKey(typeof circuitId === 'string' ? circuitId : '')
+          console.info(`[v0] wallet prover probed key material via ${prop}`)
+          return getProverKey
         }
         return undefined
       },

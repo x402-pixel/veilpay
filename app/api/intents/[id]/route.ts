@@ -8,6 +8,7 @@ import {
   getChainIntent,
   mapChainStatusToAppStatus,
 } from '@/lib/veilpay-server'
+import { protocolFromMetadata } from '@/lib/payments/protocol'
 
 export const dynamic = 'force-dynamic'
 
@@ -103,6 +104,7 @@ export async function GET(
 
       intent = {
         id: row.id,
+        protocolVersion: protocolFromMetadata(row.metadata),
         network: row.network,
         status,
         conditions: {

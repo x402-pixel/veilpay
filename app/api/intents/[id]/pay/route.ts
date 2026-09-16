@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { recordActivityEvent } from '@/lib/payments/activity'
 import { isValidIntentId } from '@/lib/payments/intent'
 import type { PaymentIntentStatus } from '@/lib/payments/types'
+import { protocolFromMetadata } from '@/lib/payments/protocol'
 import {
   getVeilPayReadiness,
   getChainIntent,
@@ -72,6 +73,13 @@ export async function POST(
       )
     }
 
+    const protocolVersion = protocolFromMetadata(dbIntent.metadata)
+    if (protocolVersion !== 'v2') {
+      return NextResponse.json(
+        { success: false, code: 'UNSUPPORTED_INVOICE_PROTOCOL', error: `Payment verification for ${protocolVersion} invoices is not enabled on this deployment.` },
+        { status: 409 },
+      )
+    }
     meta = (dbIntent.metadata ?? {}) as { chainIntentId?: string }
 
     if (!meta.chainIntentId) {

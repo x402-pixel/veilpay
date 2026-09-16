@@ -59,6 +59,8 @@ export type PaymentIntentStatus =
   | 'refunded'
 
 export interface PaymentIntent {
+  /** Explicit contract family used by this invoice; never infer this from fields. */
+  protocolVersion?: 'v1' | 'v2' | 'v3'
   /** Stable identifier for the intent (e.g. pi_...). */
   id: string
   conditions: PaymentConditions

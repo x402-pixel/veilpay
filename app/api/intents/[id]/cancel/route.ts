@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/server'
 import type { PaymentIntent, PaymentIntentStatus } from '@/lib/payments/types'
 import { recordActivityEvent } from '@/lib/payments/activity'
 import { isValidIntentId } from '@/lib/payments/intent'
+import { protocolFromMetadata } from '@/lib/payments/protocol'
 import {
   getVeilPayReadiness,
   getChainIntent,
@@ -179,6 +180,7 @@ export async function POST(
 
     const mapped: PaymentIntent = {
       id: updatedDb.id,
+      protocolVersion: protocolFromMetadata(updatedDb.metadata),
       network: updatedDb.network,
       status: 'cancelled',
       conditions: {

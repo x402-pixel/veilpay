@@ -7,6 +7,22 @@
 
 ## 1. Midnight Gateway / Contract (v3)
 
+### Versioned invoice protocol boundary (Sep 16)
+- The active create/pay path is the v2 wallet-issuance flow. v3 remains a
+  separate contract family and must not be selected by inference from fields
+  like `salt` or `tokenColor`.
+- Added `lib/payments/protocol.ts` with explicit `v1 | v2 | v3` discriminators,
+  active-protocol gating, legacy-record fallback to v2, and protocol mismatch
+  errors. New records persist `metadata.protocolVersion`; API responses expose
+  `PaymentIntent.protocolVersion`.
+- Create rejects unsupported/inactive protocol requests instead of silently
+  sending v3-shaped data to the v2 verifier. Pay rejects non-v2 records until a
+  dedicated v3 verifier is enabled. This keeps future adapters additive and
+  prevents cross-contract settlement.
+- The upstream judge snapshot is excluded from the app TypeScript program so
+  its original tests remain byte-for-byte intact without requiring the upstream
+  repository's Vitest dependency.
+
 ### Judge-facing upstream contract snapshot (Sep 16)
 - Imported all 89 files from `https://github.com/thirdbase1/veilpay` (`contract/` at
   the fetched HEAD) into `contracts/veilpay-upstream/`, preserving the complete
