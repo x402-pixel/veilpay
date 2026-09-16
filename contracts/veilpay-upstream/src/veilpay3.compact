@@ -1,0 +1,272 @@
+// VeilPay v3 — private invoices with atomic shielded settlement.
+//
+// Ledger shape deliberately mirrors the proven v1/v2 deployment:
+// Uint<64>-keyed maps only, Bytes<32> stored as values (never as keys), no
+// Sets. Amounts, token color, recipient coin key, payment secret and salt stay
+// private; the ledger stores only the invoice commitment and lifecycle.
+
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+export enum InvoiceType {
+  STANDARD,
+  MULTI_PAY,
+  DONATION
+}
+
+export enum InvoiceStatus {
+  ACTIVE,
+  PAID,
+  SETTLED,
+  CANCELLED
+}
+
+export struct InvoiceOpening {
+  amount: Uint<128>,
+  tokenColor: Bytes<32>,
+  merchantCoinPk: Bytes<32>,
+  invoiceType: InvoiceType,
+  paymentSecret: Bytes<32>,
+  salt: Bytes<32>
+}
+
+export struct InvoiceState {
+  commitment: Bytes<32>,
+  merchantAuth: Bytes<32>,
+  invoiceType: InvoiceType,
+  expiresAt: Uint<64>,
+  status: InvoiceStatus
+}
+
+export ledger sequence: Counter;
+export ledger invoices: Map<Uint<64>, InvoiceState>;
+export ledger receipts: Map<Uint<64>, Bytes<32>>;
+
+witness merchantSecretKey(): Bytes<32>;
+witness invoiceOpening(invoiceId: Uint<64>): InvoiceOpening;
+witness receiptSecret(): Bytes<32>;
+
+circuit merchantAuthCommitment(invoiceId: Uint<64>, secret: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "veilpay:v3:merchant-auth:"),
+    invoiceId as Field as Bytes<32>,
+    secret
+  ]);
+}
+
+circuit invoiceCommitment(opening: InvoiceOpening): Bytes<32> {
+  return persistentHash<Vector<6, Bytes<32>>>([
+    pad(32, "veilpay:v3:invoice:"),
+    opening.amount as Field as Bytes<32>,
+    opening.tokenColor,
+    opening.merchantCoinPk,
+    opening.paymentSecret,
+    opening.salt
+  ]);
+}
+
+circuit payerReceiptCommitment(
+  invoiceId: Uint<64>,
+  commitment: Bytes<32>,
+  secret: Bytes<32>
+): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "veilpay:v3:payer-receipt:"),
+    invoiceId as Field as Bytes<32>,
+    commitment,
+    secret
+  ]);
+}
+
+circuit isZero(a: Bytes<32>): Boolean {
+  return a == pad(32, "");
+}
+
+// Merchant issues a private invoice. The amount, token color, recipient coin
+// key, invoice type, payment secret and salt never reach the ledger.
+export circuit issueInvoice(
+  amount: Uint<128>,
+  tokenColor: Bytes<32>,
+  merchantCoinPk: Bytes<32>,
+  invoiceType: InvoiceType,
+  expiresAt: Uint<64>
+): Uint<64> {
+  assert(invoiceType == InvoiceType.DONATION || amount > 0, "amount invalid");
+  assert(!isZero(merchantCoinPk), "merchant recipient missing");
+  assert(expiresAt > sequence, "deadline invalid");
+
+  sequence.increment(1);
+  const nextId = sequence;
+
+  const opening = invoiceOpening(nextId);
+  assert(opening.amount == amount, "opening amount mismatch");
+  assert(opening.invoiceType == invoiceType, "opening type mismatch");
+  assert(opening.merchantCoinPk == merchantCoinPk, "opening recipient mismatch");
+  assert(opening.tokenColor == tokenColor, "opening token mismatch");
+
+  const commitment = invoiceCommitment(opening);
+  const auth = merchantAuthCommitment(nextId, merchantSecretKey());
+
+  invoices.insert(disclose(nextId), disclose(InvoiceState {
+    commitment: commitment,
+    merchantAuth: auth,
+    invoiceType: invoiceType,
+    expiresAt: expiresAt,
+    status: InvoiceStatus.ACTIVE
+  }));
+
+  return nextId;
+}
+
+// Customer settles a standard invoice AND moves value in one transaction.
+export circuit settleStandard(
+  invoiceId: Uint<64>,
+  coin: QualifiedShieldedCoinInfo
+): ShieldedSendResult {
+  assert(invoices.member(disclose(invoiceId)), "invoice not found");
+  const state = invoices.lookup(disclose(invoiceId));
+  assert(state.status == InvoiceStatus.ACTIVE, "invoice not active");
+  assert(state.invoiceType == InvoiceType.STANDARD, "invoice type invalid");
+  assert(sequence <= state.expiresAt, "invoice expired");
+
+  const opening = invoiceOpening(invoiceId);
+  assert(invoiceCommitment(opening) == state.commitment, "invalid invoice opening");
+  assert(coin.value >= opening.amount, "coin cannot cover invoice");
+  if (!isZero(opening.tokenColor)) {
+    assert(coin.color == opening.tokenColor, "wrong token color");
+  }
+
+  const merchant = left<ZswapCoinPublicKey, ContractAddress>(
+    ZswapCoinPublicKey { bytes: disclose(opening.merchantCoinPk) }
+  );
+  const result = sendShielded(disclose(coin), merchant, disclose(opening.amount));
+  if (result.change.is_some) {
+    const caller = left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey());
+    sendImmediateShielded(result.change.value, caller, result.change.value.value);
+  }
+
+  sequence.increment(1);
+  receipts.insert(
+    disclose(invoiceId),
+    disclose(payerReceiptCommitment(invoiceId, state.commitment, receiptSecret()))
+  );
+  invoices.insert(disclose(invoiceId), disclose(InvoiceState {
+    commitment: state.commitment,
+    merchantAuth: state.merchantAuth,
+    invoiceType: state.invoiceType,
+    expiresAt: state.expiresAt,
+    status: InvoiceStatus.PAID
+  }));
+
+  return result;
+}
+
+// Customer contributes to a Multi Pay campaign; the invoice stays open.
+export circuit settleMultiPayment(
+  invoiceId: Uint<64>,
+  coin: QualifiedShieldedCoinInfo
+): ShieldedSendResult {
+  assert(invoices.member(disclose(invoiceId)), "invoice not found");
+  const state = invoices.lookup(disclose(invoiceId));
+  assert(state.status == InvoiceStatus.ACTIVE, "invoice not active");
+  assert(state.invoiceType == InvoiceType.MULTI_PAY, "invoice type invalid");
+  assert(sequence <= state.expiresAt, "invoice expired");
+
+  const opening = invoiceOpening(invoiceId);
+  assert(invoiceCommitment(opening) == state.commitment, "invalid invoice opening");
+  assert(coin.value >= opening.amount, "coin cannot cover invoice");
+  if (!isZero(opening.tokenColor)) {
+    assert(coin.color == opening.tokenColor, "wrong token color");
+  }
+
+  const merchant = left<ZswapCoinPublicKey, ContractAddress>(
+    ZswapCoinPublicKey { bytes: disclose(opening.merchantCoinPk) }
+  );
+  const result = sendShielded(disclose(coin), merchant, disclose(opening.amount));
+  if (result.change.is_some) {
+    const caller = left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey());
+    sendImmediateShielded(result.change.value, caller, result.change.value.value);
+  }
+
+  sequence.increment(1);
+  receipts.insert(
+    disclose(invoiceId),
+    disclose(payerReceiptCommitment(invoiceId, state.commitment, receiptSecret()))
+  );
+
+  return result;
+}
+
+// Customer donates a chosen amount; the invoice stays open.
+export circuit acceptDonation(
+  invoiceId: Uint<64>,
+  coin: QualifiedShieldedCoinInfo,
+  amount: Uint<128>
+): ShieldedSendResult {
+  assert(invoices.member(disclose(invoiceId)), "invoice not found");
+  const state = invoices.lookup(disclose(invoiceId));
+  assert(state.status == InvoiceStatus.ACTIVE, "invoice not active");
+  assert(state.invoiceType == InvoiceType.DONATION, "invoice type invalid");
+  assert(sequence <= state.expiresAt, "invoice expired");
+
+  const opening = invoiceOpening(invoiceId);
+  assert(invoiceCommitment(opening) == state.commitment, "invalid invoice opening");
+  assert(amount > 0, "donation must be positive");
+  assert(coin.value >= amount, "coin cannot cover donation");
+  if (!isZero(opening.tokenColor)) {
+    assert(coin.color == opening.tokenColor, "wrong token color");
+  }
+
+  const merchant = left<ZswapCoinPublicKey, ContractAddress>(
+    ZswapCoinPublicKey { bytes: disclose(opening.merchantCoinPk) }
+  );
+  const result = sendShielded(disclose(coin), merchant, disclose(amount));
+  if (result.change.is_some) {
+    const caller = left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey());
+    sendImmediateShielded(result.change.value, caller, result.change.value.value);
+  }
+
+  sequence.increment(1);
+  receipts.insert(
+    disclose(invoiceId),
+    disclose(payerReceiptCommitment(invoiceId, state.commitment, receiptSecret()))
+  );
+
+  return result;
+}
+
+// Merchant closes a Multi Pay campaign; only the invoice merchant can.
+export circuit settleMulti(invoiceId: Uint<64>): [] {
+  assert(invoices.member(disclose(invoiceId)), "invoice not found");
+  const state = invoices.lookup(disclose(invoiceId));
+  assert(state.status == InvoiceStatus.ACTIVE, "invoice not active");
+  assert(state.invoiceType == InvoiceType.MULTI_PAY, "invoice type invalid");
+  assert(state.merchantAuth == merchantAuthCommitment(invoiceId, merchantSecretKey()), "not the invoice merchant");
+
+  sequence.increment(1);
+  invoices.insert(disclose(invoiceId), disclose(InvoiceState {
+    commitment: state.commitment,
+    merchantAuth: state.merchantAuth,
+    invoiceType: state.invoiceType,
+    expiresAt: state.expiresAt,
+    status: InvoiceStatus.SETTLED
+  }));
+}
+
+// Merchant cancels an unpaid invoice; only the invoice merchant can.
+export circuit cancelInvoice(invoiceId: Uint<64>): [] {
+  assert(invoices.member(disclose(invoiceId)), "invoice not found");
+  const state = invoices.lookup(disclose(invoiceId));
+  assert(state.status == InvoiceStatus.ACTIVE, "invoice not active");
+  assert(state.merchantAuth == merchantAuthCommitment(invoiceId, merchantSecretKey()), "not the invoice merchant");
+
+  sequence.increment(1);
+  invoices.insert(disclose(invoiceId), disclose(InvoiceState {
+    commitment: state.commitment,
+    merchantAuth: state.merchantAuth,
+    invoiceType: state.invoiceType,
+    expiresAt: state.expiresAt,
+    status: InvoiceStatus.CANCELLED
+  }));
+}

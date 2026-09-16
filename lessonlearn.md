@@ -7,6 +7,15 @@
 
 ## 1. Midnight Gateway / Contract (v3)
 
+### Judge-facing upstream contract snapshot (Sep 16)
+- Imported all 89 files from `https://github.com/thirdbase1/veilpay` (`contract/` at
+  the fetched HEAD) into `contracts/veilpay-upstream/`, preserving the complete
+  source/test/package tree and managed artifacts for `veilpay` (v1), `veilpay2`,
+  and `veilpay3`.
+- Keep this snapshot separate from `vendor/veilpay/`: the explicit project-root
+  path makes the contract implementations and compiled ZK artifacts easy for
+  judges to inspect without depending on a nested vendored repository.
+
 ### Two separate wallet states caused "disconnected" despite connected wallet (Sep 16)
 - VeilPay has TWO independent wallet surfaces: (1) the Supabase AUTH session
   (`OneAmWalletButton` reads `supabase.auth.getSession()` — what the nav shows)
