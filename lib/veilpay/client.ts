@@ -150,16 +150,15 @@ class ManagedCircuitZKConfigProvider extends ZKConfigProvider<string> {
   }
 
   // Mirrors the official NodeZkConfigProvider/FetchZkConfigProvider layout:
-  // zkir/{circuit}.bzkir (binary ZKIR) and keys/{circuit}.verifier. This
-  // compactc generation emits no separate .prover files — the proving
-  // material travels inside the .bzkir the proof server consumes — so
-  // getProverKey serves those same bytes if the wallet requests them.
+  // zkir/{circuit}.bzkir (binary ZKIR), keys/{circuit}.prover and
+  // keys/{circuit}.verifier from the compactc generation output.
   override getZKIR(circuitId: string) {
     return this.fetchArtifact(`/veilpay/managed/zkir/${circuitId}.bzkir`) as never
   }
 
   override getProverKey(circuitId: string) {
-    return this.fetchArtifact(`/veilpay/managed/zkir/${circuitId}.bzkir`) as never
+    if (!circuitId) return Promise.reject(new Error('No circuit id supplied for prover key')) as never
+    return this.fetchArtifact(`/veilpay/managed/keys/${circuitId}.prover`) as never
   }
 
   override getVerifierKey(circuitId: string) {
@@ -171,8 +170,14 @@ class ManagedCircuitZKConfigProvider extends ZKConfigProvider<string> {
   // getVerifierKeys on the copied object. The base class returns `this` here,
   // which would hand over prototype-only methods — override it with a plain
   // object whose every method is an OWN property, batched form included.
+  //
+  // Some extension builds probe the provider for key accessors beyond the
+  // published v4 interface (observed in the wild: `getSignKey`). Proxy any
+  // unknown get* probe to the circuit's prover key material and log the
+  // probe so mismatches surface in the console instead of throwing
+  // "e.getSignKey is not a function" from the extension's minified bundle.
   override asKeyMaterialProvider() {
-    return {
+    const known: Record<string, unknown> = {
       getZKIR: (circuitId: string) => this.getZKIR(circuitId),
       getProverKey: (circuitId: string) => this.getProverKey(circuitId),
       getVerifierKey: (circuitId: string) => this.getVerifierKey(circuitId),
@@ -181,6 +186,17 @@ class ManagedCircuitZKConfigProvider extends ZKConfigProvider<string> {
         return Promise.all(ids.map(async (id) => [id, await this.getVerifierKey(id)] as const))
       },
     }
+    return new Proxy(known, {
+      get(target, prop) {
+        if (prop in target) return target[prop]
+        if (typeof prop === 'string' && /^get[A-Z]/.test(prop)) {
+          console.info(`[v0] wallet prover probed key material via ${String(prop)}`)
+          return (circuitId: unknown) =>
+            this.getProverKey(typeof circuitId === 'string' ? circuitId : '')
+        }
+        return undefined
+      },
+    }) as never
   }
 }
 

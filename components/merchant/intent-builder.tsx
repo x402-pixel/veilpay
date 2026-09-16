@@ -113,11 +113,17 @@ export function IntentBuilder() {
       const { intent } = await createPaymentIntentApi(conditions, walletId)
       setCreatedIntent(intent)
       router.refresh()
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Failed to create invoice')
-    } finally {
-      setSubmitting(false)
-    }
+        } catch (err) {
+          if (err instanceof Error) {
+            // Include the top stack frame — wallet-extension failures surface
+            // as minified property errors whose message alone is ambiguous.
+            const frame = err.stack?.split('\n').find((l) => l.trim().startsWith('at'))
+            setSubmitError(frame ? `${err.message} (${frame.trim().slice(0, 120)})` : err.message)
+          } else {
+            setSubmitError('Failed to create invoice')
+          }
+          console.error('[v0] invoice creation failed', err)
+        }
   }
 
   return (
