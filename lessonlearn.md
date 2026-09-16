@@ -7,6 +7,30 @@
 
 ## 1. Midnight Gateway / Contract (v3)
 
+### Two separate wallet states caused "disconnected" despite connected wallet (Sep 16)
+- VeilPay has TWO independent wallet surfaces: (1) the Supabase AUTH session
+  (`OneAmWalletButton` reads `supabase.auth.getSession()` — what the nav shows)
+  and (2) the DAPP-CONNECTOR context (`WalletProvider` in `lib/wallet/context.tsx`
+  — what the sidebar "Merchant Wallet" line and invoice issuance read). Being
+  signed in does NOT mean the connector context is connected.
+- Bug: `WalletProvider` only auto-restored from `localStorage['veilpay.connectedWalletId']`,
+  which is written ONLY by the extension login flow (`WalletConnectForm`). A
+  merchant signed in without that key (cleared storage, restore failed once and
+  the key was removed, or a different sign-in path) stayed disconnected forever:
+  sidebar showed "Disconnected" and `createPaymentIntentApi` threw
+  "Connect your Midnight wallet…".
+- Fix: session-aware silent restore in `WalletProvider` — when an extension is
+  detected and the merchant has an authenticated Supabase session, auto-connect
+  the first detected wallet (best-effort, silent on failure). The stored-rdns
+  preference still wins when present. Gate the no-preference auto-connect on the
+  auth session so anonymous visitors never get a surprise extension prompt.
+- Also added an inline "Connect wallet" banner in `IntentBuilder` when the
+  connector is disconnected, so the merchant can fix it in one click instead of
+  hitting the dead-end submit error.
+- Lesson: when a UI reports "wallet disconnected" but the user insists it is
+  connected, check WHICH wallet state each component reads — auth session vs
+  dapp-connector context are different stores and can diverge silently.
+
 ### Branch merge vs main's client-side issuance (Sep 15)
 - main moved issuance CLIENT-SIDE (`076e4ab`: merchant's wallet extension signs
   `createIntent`, server only verifies against the public ledger + registers)

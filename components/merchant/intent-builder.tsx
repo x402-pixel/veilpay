@@ -31,7 +31,7 @@ function fieldError(issues: { field: string; message: string }[], field: string)
 
 export function IntentBuilder() {
   const router = useRouter()
-  const { walletId } = useWallet()
+  const { walletId, status, connect } = useWallet()
 
   const [conditions, setConditions] = useState<PaymentConditions>({
     amount: { kind: 'exactly', asset: SUPPORTED_ASSETS[0], amount: '', amountMax: '' },
@@ -276,6 +276,21 @@ export function IntentBuilder() {
         </div>
 
         <div className="flex flex-col gap-3">
+          {status !== 'connected' && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm">
+              <p className="text-foreground">
+                Your Midnight wallet extension must be connected to issue the invoice on-chain.
+              </p>
+              <button
+                type="button"
+                onClick={() => void connect()}
+                disabled={status === 'connecting'}
+                className="shrink-0 rounded-md border border-warning/40 bg-warning/20 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-warning/30 disabled:opacity-50"
+              >
+                {status === 'connecting' ? 'Connecting…' : 'Connect wallet'}
+              </button>
+            </div>
+          )}
           <button
             type="submit"
             disabled={submitting || !isValid}

@@ -10,6 +10,7 @@ import {
 } from 'react'
 import type { WalletAccount, WalletConnectionStatus } from './types'
 import { midnightPublicConfig } from '@/lib/config'
+import { createClient } from '@/lib/supabase/client'
 import { detectInjectedWallets, connectWalletApi } from './detect'
 
 interface WalletContextValue {
@@ -112,32 +113,57 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   // Silently restore a previous wallet session after a page reload. The
   // connector's connect() is prompt-free for already-authorized origins, so
   // this only succeeds when the merchant approved this dapp before.
+  //
+  // Two restore paths:
+  //  1. Stored preference (localStorage rdns) — from a prior explicit connect.
+  //  2. Signed-in merchant with no stored preference — the auth session (e.g.
+  //     seed-phrase sign-in) proves this is the dashboard owner, so reconnect
+  //     the first detected extension. Without this, the sidebar shows
+  //     "Disconnected" and invoice issuance fails even though the merchant is
+  //     signed in and the extension is unlocked.
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (status !== 'disconnected') return
+    if (!isExtensionDetected) return
+
+    const wallets = detectInjectedWallets()
+    if (wallets.length === 0) return
 
     const stored = window.localStorage.getItem(WALLET_ID_STORAGE_KEY)
-    if (!stored) return
-
     // Resolve the stored rdns back to THIS page load's injection key —
     // v4 wallets inject under a new UUID every reload.
-    const wallet = detectInjectedWallets().find((w) => walletSessionKey(w) === stored)
-    if (!wallet) return
+    const preferred = stored
+      ? wallets.find((w) => walletSessionKey(w) === stored)
+      : undefined
+    const target = preferred ?? wallets[0]
 
     let cancelled = false
     ;(async () => {
+      if (!preferred) {
+        // Only auto-connect without an explicit stored choice when the
+        // merchant is authenticated — otherwise an unapproved connect()
+        // would pop the extension prompt for anonymous visitors.
+        try {
+          const { data } = await createClient().auth.getSession()
+          if (!data.session) return
+        } catch {
+          return
+        }
+      }
+
       try {
-        const { address } = await connectWalletApi(wallet.id)
+        const { address } = await connectWalletApi(target.id)
         if (cancelled) return
         setAccount({
           address,
           network: midnightPublicConfig.network || 'testnet',
         })
-        setWalletId(wallet.id)
+        setWalletId(target.id)
+        window.localStorage.setItem(WALLET_ID_STORAGE_KEY, walletSessionKey(target))
         setStatus('connected')
       } catch {
         // Restore is best-effort — the merchant can connect manually.
-        window.localStorage.removeItem(WALLET_ID_STORAGE_KEY)
+        if (preferred) window.localStorage.removeItem(WALLET_ID_STORAGE_KEY)
       }
     })()
 
