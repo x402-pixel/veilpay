@@ -19,6 +19,7 @@ import { midnightPublicConfig } from '@/lib/config'
 import type { PaymentConditions, PaymentIntent, PaymentIntentStatus } from '@/lib/payments/types'
 import { createClient } from '@/lib/supabase/server'
 import { recordActivityEvent } from '@/lib/payments/activity'
+import { ACTIVE_INVOICE_PROTOCOL, assertProtocolCompatibility, protocolFromMetadata } from '@/lib/payments/protocol'
 
 export const dynamic = 'force-dynamic'
 
@@ -161,6 +162,7 @@ export async function GET(request: Request) {
 
       return {
         id: row.id,
+        protocolVersion: protocolFromMetadata(row.metadata),
         network: row.network,
         status: currentStatus,
         conditions: {
@@ -221,6 +223,12 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => ({}))
+    let protocolVersion: typeof ACTIVE_INVOICE_PROTOCOL
+    try {
+      protocolVersion = assertProtocolCompatibility(body.protocolVersion)
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Unsupported invoice protocol' }, { status: 409 })
+    }
     const conditions = body.conditions as PaymentConditions | undefined
 
     if (!conditions) {
@@ -259,6 +267,7 @@ export async function POST(request: Request) {
 
         const existingMapped: PaymentIntent = {
           id: existing.id,
+          protocolVersion: protocolFromMetadata(existing.metadata),
           network: existing.network,
           status: existing.status as PaymentIntentStatus,
           conditions: {
@@ -409,6 +418,7 @@ export async function POST(request: Request) {
       network: midnightPublicConfig.network || 'midnight-preprod',
     })
     draft.status = 'awaiting_payment'
+    draft.protocolVersion = protocolVersion
     draft.chainIntentId = chainIntentIdStr
     draft.paymentSecret = paymentSecretHex
     draft.expiresAtOps = expiresAtOps.toString()
@@ -436,6 +446,7 @@ export async function POST(request: Request) {
       expires_at: draft.conditions.expiresAt ?? null,
       reference: draft.conditions.reference ?? null,
       metadata: {
+        protocolVersion,
         chainIntentId: chainIntentIdStr,
         paymentSecret: paymentSecretHex,
         tokenColor: tokenColorHex,

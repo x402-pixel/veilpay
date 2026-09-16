@@ -5,6 +5,7 @@ import type {
   PaymentIntentStatus,
 } from './types'
 import { parseDecimalToMicroUnits } from './intent'
+import { ACTIVE_INVOICE_PROTOCOL, assertProtocolCompatibility } from './protocol'
 
 /**
  * Client-facing typed service layer for VeilPay invoices.
@@ -116,6 +117,9 @@ export async function createPaymentIntentApi(
     )
   }
 
+  // The client and server must agree on the contract family. This prevents a
+  // v3 opening from ever being sent to the v2 registration endpoint.
+  const protocolVersion = assertProtocolCompatibility(ACTIVE_INVOICE_PROTOCOL)
   const amountMicro = parseDecimalToMicroUnits(conditions.amount.amount)
   if (amountMicro === null || amountMicro <= 0n) {
     throw new Error('Amount must be a positive decimal with at most 6 decimal places.')
@@ -127,7 +131,7 @@ export async function createPaymentIntentApi(
   const res = await fetch('/api/intents', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ conditions, issuance }),
+    body: JSON.stringify({ conditions, issuance, protocolVersion }),
     cache: 'no-store',
   })
 
