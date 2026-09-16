@@ -13,4 +13,3 @@ export const witnesses = {
         return [privateState, secret];
     },
 };
-//# sourceMappingURL=witnesses.js.map

@@ -44,4 +44,3 @@ export const generateDust = async (logger, walletSeed, unshieldedState, walletFa
     logger.info(`Receiver dust balance after generation: ${dustBalance}`);
     return txId;
 };
-//# sourceMappingURL=generate-dust.js.map

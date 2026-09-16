@@ -79,6 +79,15 @@ export interface PaymentIntent {
   paymentSecret?: string
   /** Operation-counter TTL anchored at creation (chain-backed intents only). */
   expiresAtOps?: string
+  /**
+   * v3 opening fields: the ledger stores only the invoice commitment, so the
+   * payer reconstructs the private opening from these checkout-link params
+   * (amount comes from conditions.amount, parsed to micro-units client-side).
+   */
+  salt?: string
+  invoiceType?: string
+  merchantCoinPk?: string
+  tokenColor?: string
 }
 
 /**

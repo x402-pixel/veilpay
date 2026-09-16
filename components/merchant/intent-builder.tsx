@@ -324,7 +324,7 @@ export function IntentBuilder() {
         </pre>
         <p className="text-xs text-muted-foreground">
           This is the exact typed structure passed to the Midnight client&apos;s{' '}
-          <code className="font-mono text-foreground">createIntent()</code>. The{' '}
+          <code className="font-mono text-foreground">issueInvoice()</code>. The{' '}
           <code className="font-mono text-foreground">id</code> shown is a preview placeholder;
           a real id is generated on submission.
         </p>

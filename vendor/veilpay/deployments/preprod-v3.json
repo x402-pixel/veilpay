@@ -1,0 +1,114 @@
+{
+  "protocol": "veilpay",
+  "version": "v3-private",
+  "network": "midnight-preprod",
+  "contractAddress": "0xaad2cd8b9a98c9b8f7c6f3edd562d895705c19d24eb122c5253b22187e950772",
+  "deployerAddress": "mn_addr_preprod12ndwhad9g7j60s55zcmyeawdun58j5n2707j6kjg23u5umglkt8qkejgxw",
+  "deployedAt": "2026-09-15T13:46:35Z",
+  "explorer": "https://preprod.midnightexplorer.com/contracts/0xaad2cd8b9a98c9b8f7c6f3edd562d895705c19d24eb122c5253b22187e950772",
+  "sourceFile": "contract/src/veilpay3.compact",
+  "compilerVersion": "0.31.1",
+  "languageVersion": "0.23.0",
+  "runtimeVersion": "0.16.0",
+  "circuits": {
+    "issueInvoice": {
+      "kind": "proven",
+      "arguments": [
+        { "name": "amount", "type": "Uint<128>" },
+        { "name": "tokenColor", "type": "Bytes<32>" },
+        { "name": "merchantCoinPk", "type": "Bytes<32>" },
+        { "name": "invoiceType", "type": "enum InvoiceType" },
+        { "name": "expiresAt", "type": "Uint<64>" }
+      ],
+      "returnType": "Uint<64>",
+      "witnessInputs": ["merchantSecretKey", "invoiceOpening(invoiceId)"],
+      "note": "private invoice terms; only the commitment and lifecycle reach the ledger"
+    },
+    "settleStandard": {
+      "kind": "proven",
+      "arguments": [
+        { "name": "invoiceId", "type": "Uint<64>" },
+        { "name": "coin", "type": "QualifiedShieldedCoinInfo{nonce,color,value,mt_index}" }
+      ],
+      "returnType": "ShieldedSendResult",
+      "witnessInputs": ["invoiceOpening(invoiceId)", "receiptSecret"],
+      "zswap": "consumes the payer coin, sends the private amount to the merchant coin key, change back to the payer",
+      "note": "closes the invoice in the same transaction"
+    },
+    "settleMultiPayment": {
+      "kind": "proven",
+      "arguments": [
+        { "name": "invoiceId", "type": "Uint<64>" },
+        { "name": "coin", "type": "QualifiedShieldedCoinInfo" }
+      ],
+      "returnType": "ShieldedSendResult",
+      "note": "Multi Pay contribution; invoice stays ACTIVE"
+    },
+    "acceptDonation": {
+      "kind": "proven",
+      "arguments": [
+        { "name": "invoiceId", "type": "Uint<64>" },
+        { "name": "coin", "type": "QualifiedShieldedCoinInfo" },
+        { "name": "amount", "type": "Uint<128>" }
+      ],
+      "returnType": "ShieldedSendResult",
+      "note": "donation of a chosen amount; change returns to the payer"
+    },
+    "settleMulti": {
+      "kind": "proven",
+      "arguments": [{ "name": "invoiceId", "type": "Uint<64>" }],
+      "witnessInputs": ["merchantSecretKey"],
+      "note": "merchant closes a Multi Pay campaign"
+    },
+    "cancelInvoice": {
+      "kind": "proven",
+      "arguments": [{ "name": "invoiceId", "type": "Uint<64>" }],
+      "witnessInputs": ["merchantSecretKey"],
+      "note": "merchant cancels an unpaid invoice"
+    }
+  },
+  "publicReads": {
+    "sequence": "Counter (also the invoice-id source)",
+    "invoices": "Map<Uint<64>, InvoiceState{commitment, merchantAuth, invoiceType, expiresAt, status}>",
+    "receipts": "Map<Uint<64>, Bytes<32>>"
+  },
+  "privacy": {
+    "private": [
+      "amount",
+      "token color",
+      "merchant receiver coin key",
+      "invoice type (also committed on-ledger)",
+      "payment secret",
+      "salt",
+      "line items / memo / counterparty (encrypted envelope, never on chain)"
+    ],
+    "public": [
+      "invoice id (dense counter)",
+      "invoice commitment",
+      "merchant auth commitment",
+      "invoice type",
+      "expiry (ledger-operation deadline)",
+      "status",
+      "receipt commitment"
+    ],
+    "notes": [
+      "sendShielded requires a compile-time disclosure declaration for the witness-derived amount and recipient key; values remain inside zswap commitments on-chain",
+      "Compact has no block height access, so expiry is a ledger-operation deadline"
+    ]
+  },
+  "endpoints": {
+    "gateway": "https://api-preprod.1am.xyz",
+    "indexerHttp": "https://api-preprod.1am.xyz/api/v4/graphql",
+    "indexerWs": "wss://api-preprod.1am.xyz/api/v4/graphql/ws",
+    "rpc": "wss://rpc.preprod.midnight.network"
+  },
+  "deploymentPath": {
+    "tool": "cli/src/gateway-deploy3.ts (npm --workspace cli run preprod-gateway3)",
+    "proving": "gateway hosted /check + /prove",
+    "funding": "gateway-sponsored DUST balancing",
+    "submit": "author_submitExtrinsic via gateway /rpc/midnight",
+    "inclusionCheck": "hash-based indexer polling"
+  },
+  "tests": "12 v3 contract tests in contract/src/test/veilpay3.test.ts (vitest, simulated ledger)",
+  "tokenSupport": "any zswap shielded token color; zero color = open invoice (accepts any token)"
+}

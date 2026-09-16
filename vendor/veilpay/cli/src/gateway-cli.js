@@ -152,4 +152,3 @@ const run = async (argv) => {
     }
 };
 await run(process.argv.slice(2));
-//# sourceMappingURL=gateway-cli.js.map

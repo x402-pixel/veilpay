@@ -1,0 +1,59 @@
+name: v3
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compile-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Compact Compiler
+        uses: midnightntwrk/setup-compact-action@v1
+        with:
+          compact-version: '0.31.1'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Compile contracts (v1 + v2 + v3)
+        run: |
+          set +e
+          npm --workspace contract run compact > v3-compile.log 2>&1
+          code=$?
+          echo "COMPACT_EXIT=$code" | tee -a v3-compile.log
+          set -e
+          if [ "$code" -ne 0 ]; then exit "$code"; fi
+
+      - name: Typecheck contract
+        run: npm --workspace contract run typecheck 2>&1 | tee -a v3-compile.log
+
+      - name: Test contract
+        run: npm --workspace contract run test 2>&1 | tee -a v3-compile.log
+
+      - name: Publish compile log and artifacts to the branch
+        if: always()
+        run: |
+          rm -f contract/src/managed/veilpay3/keys/*.prover 2>/dev/null || true
+          git config user.name "veilpay-ci"
+          git config user.email "ci@users.noreply.github.com"
+          git add -f v3-compile.log 2>/dev/null || true
+          git add -f contract/src/managed 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "nothing to publish"
+          else
+            git commit -m "chore(ci): v3 compile log + compiled artifacts [skip ci]"
+            git push
+          fi

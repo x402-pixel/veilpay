@@ -1,0 +1,10 @@
+import { UnshieldedTokenType } from '@midnight-ntwrk/midnight-js-protocol/ledger';
+import { type WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
+import { type ShieldedWalletAPI, type ShieldedWalletState } from '@midnight-ntwrk/wallet-sdk-shielded';
+import { type UnshieldedWalletAPI, type UnshieldedWalletState } from '@midnight-ntwrk/wallet-sdk-unshielded-wallet';
+import { type EnvironmentConfiguration } from '@midnight-ntwrk/testkit-js';
+import { Logger } from 'pino';
+export declare const getInitialShieldedState: (logger: Logger, wallet: ShieldedWalletAPI) => Promise<ShieldedWalletState>;
+export declare const getInitialUnshieldedState: (logger: Logger, wallet: UnshieldedWalletAPI) => Promise<UnshieldedWalletState>;
+export declare const syncWallet: (logger: Logger, wallet: WalletFacade, throttleTime?: number) => Promise<unknown>;
+export declare const waitForUnshieldedFunds: (logger: Logger, wallet: WalletFacade, env: EnvironmentConfiguration, tokenType: UnshieldedTokenType, fundFromFaucet?: boolean, throttleTime?: number) => Promise<UnshieldedWalletState>;

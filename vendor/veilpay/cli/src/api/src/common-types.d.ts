@@ -1,0 +1,76 @@
+/**
+ * VeilPay common types and abstractions.
+ *
+ * @module
+ */
+import { type MidnightProviders } from '@midnight-ntwrk/midnight-js-types';
+import { type FoundContract } from '@midnight-ntwrk/midnight-js-contracts';
+import type { VeilPay } from '../../contract/src/index';
+import type { VeilPayPrivateState } from '../../contract/src/witnesses';
+import type { VeilPay2 } from '../../contract/src/index';
+import type { VeilPay2PrivateState } from '../../contract/src/witnesses2';
+import type { InvoiceOpening as VeilPay3InvoiceOpening, VeilPay3PrivateState } from '../../contract/src/witnesses3';
+export declare const veilPayPrivateStateKey = "veilPayPrivateState";
+export type PrivateStateId = typeof veilPayPrivateStateKey;
+export type PrivateStates = {
+    readonly veilPayPrivateState: VeilPayPrivateState;
+};
+export type VeilPayContract = VeilPay.Contract<VeilPayPrivateState>;
+/** Names of the impure (proven) circuits, used to type providers. */
+export type VeilPayCircuitKeys = Exclude<keyof VeilPayContract['impureCircuits'], number | symbol>;
+export type VeilPayProviders = MidnightProviders<VeilPayCircuitKeys, PrivateStateId, VeilPayPrivateState>;
+export type DeployedVeilPayContract = FoundContract<VeilPayContract>;
+export declare const veilPay2PrivateStateKey = "veilPay2PrivateState";
+export type PrivateStateId2 = typeof veilPay2PrivateStateKey;
+export type PrivateStates2 = {
+    readonly veilPay2PrivateState: VeilPay2PrivateState;
+};
+export type VeilPay2Contract = VeilPay2.Contract<VeilPay2PrivateState>;
+export type VeilPay2CircuitKeys = Exclude<keyof VeilPay2Contract['impureCircuits'], number | symbol>;
+export type VeilPay2Providers = MidnightProviders<VeilPay2CircuitKeys, PrivateStateId2, VeilPay2PrivateState>;
+export type DeployedVeilPay2Contract = FoundContract<VeilPay2Contract>;
+/** Public view of a payment intent, for UIs and receipts. */
+export type IntentView = {
+    readonly id: bigint;
+    readonly merchantId: string;
+    readonly amount: bigint;
+    readonly expiresAt: bigint;
+    readonly status: VeilPay.IntentStatus;
+    readonly paidAmount: bigint;
+    readonly refundedAmount: bigint;
+    readonly isMine: boolean;
+};
+/** Public view of a v2 intent, including token routing metadata. */
+export type Intent2View = {
+    readonly id: bigint;
+    readonly merchantId: string;
+    readonly merchantCoinPk: string;
+    readonly tokenColor: string;
+    readonly amount: bigint;
+    readonly expiresAt: bigint;
+    readonly status: VeilPay2.IntentStatus;
+    readonly paidAmount: bigint;
+    readonly refundedAmount: bigint;
+    readonly hasReceipt: boolean;
+    readonly isMine: boolean;
+};
+export declare const veilPay3PrivateStateKey = "veilPay3PrivateState";
+export type PrivateStateId3 = typeof veilPay3PrivateStateKey;
+export type PrivateStates3 = {
+    readonly veilPay3PrivateState: VeilPay3PrivateState;
+};
+/**
+ * Impure circuit names of the v3 contract, kept structural so this shared
+ * module does not depend on managed/veilpay3 being generated first.
+ */
+export type VeilPay3CircuitKeys = 'issueInvoice' | 'settleStandard' | 'settleMultiPayment' | 'acceptDonation' | 'settleMulti' | 'cancelInvoice' | 'isSettled';
+export type VeilPay3Providers = MidnightProviders<VeilPay3CircuitKeys, PrivateStateId3, VeilPay3PrivateState>;
+/** Public view of a v3 invoice: only the commitment and lifecycle are public. */
+export type Invoice3View = {
+    readonly invoiceId: string;
+    readonly opening: VeilPay3InvoiceOpening;
+    /** InvoiceStatus enum value from the generated contract, when known. */
+    readonly status: number | null;
+    readonly expiresAt: bigint;
+    readonly hasReceipt: boolean;
+};

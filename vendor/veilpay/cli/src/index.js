@@ -205,4 +205,3 @@ export const main = async (config) => {
         process.exitCode = 1;
     }
 };
-//# sourceMappingURL=index.js.map
